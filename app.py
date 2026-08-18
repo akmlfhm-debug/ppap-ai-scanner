@@ -29,7 +29,7 @@ if st.button("Scan Documents & Generate Checklist"):
         st.error("Please upload at least one PDF document.")
         st.stop()
 
-    # Initialize the new, modern SDK Client
+    # Initialize the new SDK Client
     client = genai.Client(api_key=api_key)
     
     with st.spinner("Scanning documents with AI... This usually takes 15-30 seconds."):
@@ -41,8 +41,11 @@ if st.button("Scan Documents & Generate Checklist"):
                     tmp.write(file.read())
                     tmp_path = tmp.name
                 
-                # Upload to Gemini API using the new SDK
-                uploaded_to_gemini = client.files.upload(file=tmp_path, display_name=file.name)
+                # FIX: In the new SDK, display_name must be passed inside the config dictionary
+                uploaded_to_gemini = client.files.upload(
+                    file=tmp_path, 
+                    config={'display_name': file.name}
+                )
                 gemini_files.append(uploaded_to_gemini)
                 os.unlink(tmp_path) # Clean up temp file
 
@@ -73,7 +76,7 @@ if st.button("Scan Documents & Generate Checklist"):
                 contents=contents
             )
             
-            # Clean up files from Gemini API storage to keep your account clean
+            # Clean up files from Gemini API storage
             for f in gemini_files:
                 client.files.delete(name=f.name)
 
