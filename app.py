@@ -4,6 +4,7 @@ import pandas as pd
 import json
 import os
 import tempfile
+import time
 
 # --- UI Setup ---
 st.set_page_config(layout="wide", page_title="AI PPAP Scanner")
@@ -41,7 +42,7 @@ if st.button("Scan Documents & Generate Checklist"):
                     tmp.write(file.read())
                     tmp_path = tmp.name
                 
-                # FIX: In the new SDK, display_name must be passed inside the config dictionary
+                # Upload to Gemini API
                 uploaded_to_gemini = client.files.upload(
                     file=tmp_path, 
                     config={'display_name': file.name}
@@ -69,12 +70,26 @@ if st.button("Scan Documents & Generate Checklist"):
             - "Findings": A brief, accurate explanation of what you found (e.g., "CPK is > 1.33", "RPN is 192", or "Not provided").
             """
 
-            # 3. Send the PDFs and the Prompt to the AI
             contents = gemini_files + [prompt]
-            response = client.models.generate_content(
-                model='gemini-1.5-pro',
-                contents=contents
-            )
+            
+            # 3. Send the PDFs and the Prompt to the AI with a Retry Loop
+            max_retries = 3
+            response = None
+            
+            for attempt in range(max_retries):
+                try:
+                    # Switched to the Flash model for faster processing and fewer 503 errors
+                    response = client.models.generate_content(
+                        model='gemini-1.5-flash', 
+                        contents=contents
+                    )
+                    break # Success! Break out of the retry loop
+                except Exception as e:
+                    if "503" in str(e) and attempt < max_retries - 1:
+                        time.sleep(3) # Wait 3 seconds and try again
+                        continue
+                    else:
+                        raise e # If it is not a 503 or we ran out of retries, throw the error
             
             # Clean up files from Gemini API storage
             for f in gemini_files:
@@ -105,5 +120,7 @@ if st.button("Scan Documents & Generate Checklist"):
             styled_df = df.style.map(color_status, subset=['Status'])
             st.dataframe(styled_df, use_container_width=True)
 
+        except json.JSONDecodeError:
+            st.error("The AI failed to format the response as JSON. Please try scanning again.")
         except Exception as e:
             st.error(f"An error occurred during scanning: {e}")
