@@ -80,7 +80,7 @@ if st.button("Scan Documents & Generate Checklist"):
                 try:
                     # Switched to the Flash model for faster processing and fewer 503 errors
                     response = client.models.generate_content(
-                        model='gemini-1.5-flash', 
+                        model='gemini-3.5-flash', 
                         contents=contents
                     )
                     break # Success! Break out of the retry loop
