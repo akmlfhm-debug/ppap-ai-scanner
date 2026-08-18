@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 import pandas as pd
 import json
 import os
@@ -29,10 +29,8 @@ if st.button("Scan Documents & Generate Checklist"):
         st.error("Please upload at least one PDF document.")
         st.stop()
 
-    genai.configure(api_key=api_key)
-    
-    # We use Gemini 1.5 Pro because it excels at complex document/PDF analysis
-    model = genai.GenerativeModel('gemini-1.5-pro')
+    # Initialize the new, modern SDK Client
+    client = genai.Client(api_key=api_key)
     
     with st.spinner("Scanning documents with AI... This usually takes 15-30 seconds."):
         try:
@@ -43,8 +41,8 @@ if st.button("Scan Documents & Generate Checklist"):
                     tmp.write(file.read())
                     tmp_path = tmp.name
                 
-                # Upload to Gemini API
-                uploaded_to_gemini = genai.upload_file(path=tmp_path, display_name=file.name)
+                # Upload to Gemini API using the new SDK
+                uploaded_to_gemini = client.files.upload(file=tmp_path, display_name=file.name)
                 gemini_files.append(uploaded_to_gemini)
                 os.unlink(tmp_path) # Clean up temp file
 
@@ -69,16 +67,22 @@ if st.button("Scan Documents & Generate Checklist"):
             """
 
             # 3. Send the PDFs and the Prompt to the AI
-            response = model.generate_content(gemini_files + [prompt])
+            contents = gemini_files + [prompt]
+            response = client.models.generate_content(
+                model='gemini-1.5-pro',
+                contents=contents
+            )
             
-            # Clean up files from Gemini API storage
+            # Clean up files from Gemini API storage to keep your account clean
             for f in gemini_files:
-                genai.delete_file(f.name)
+                client.files.delete(name=f.name)
 
             # 4. Parse the AI's JSON response
             raw_text = response.text.strip()
             if raw_text.startswith("```json"):
-                raw_text = raw_text[7:-3] # Strip markdown if the AI accidentally includes it
+                raw_text = raw_text[7:-3] 
+            elif raw_text.startswith("```"):
+                raw_text = raw_text[3:-3]
                 
             checklist_data = json.loads(raw_text)
             df = pd.DataFrame(checklist_data)
