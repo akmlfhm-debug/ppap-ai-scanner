@@ -57,7 +57,7 @@ if st.button("Run Detailed Visual Check"):
             """
 
             response = client.models.generate_content(
-                model='gemini-3.5-flash', # Pro model is best for strict text extraction
+                model='gemini-3.5-pro', # Pro model is best for strict text extraction
                 contents=gemini_files + [prompt]
             )
             
