@@ -63,7 +63,7 @@ if st.button("Run Detailed Visual Check"):
             """
 
             response = client.models.generate_content(
-                model='gemini-1.5-pro',
+                model='gemini-2.5-pro',
                 contents=gemini_files + [prompt]
             )
             
