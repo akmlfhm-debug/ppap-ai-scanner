@@ -4,123 +4,145 @@ import pandas as pd
 import json
 import os
 import tempfile
-import time
+import fitz  # PyMuPDF library for PDF highlighting
 
 # --- UI Setup ---
-st.set_page_config(layout="wide", page_title="AI PPAP Scanner")
-st.title("🤖 AI-Powered PPAP Document Scanner")
-st.write("Upload your engineering PDFs. The AI will scan the contents and generate an automated PPAP Checklist.")
+st.set_page_config(layout="wide", page_title="AI Visual PPAP Validator")
+st.title("👁️ AI Visual PPAP Validator")
+st.write("This system uses AI to analyze documents, and deterministic logic to highlight the exact evidence on the PDFs.")
 
-# Securely input API Key
 api_key = st.text_input("Enter your Google Gemini API Key:", type="password")
 
-# --- File Uploader ---
 uploaded_files = st.file_uploader(
     "Upload PPAP Documents (PDFs only)", 
     type=['pdf'], 
     accept_multiple_files=True
 )
 
-if st.button("Scan Documents & Generate Checklist"):
-    if not api_key:
-        st.error("Please enter an API Key to proceed.")
-        st.stop()
-        
-    if not uploaded_files:
-        st.error("Please upload at least one PDF document.")
+if st.button("Run Detailed Visual Check"):
+    if not api_key or not uploaded_files:
+        st.error("Please provide both API key and files.")
         st.stop()
 
-    # Initialize the new SDK Client
     client = genai.Client(api_key=api_key)
     
-    with st.spinner("Scanning documents with AI... This usually takes 15-30 seconds."):
+    with st.spinner("Analyzing documents and rendering visual evidence (this takes ~30 seconds)..."):
+        # 1. Save files locally for PyMuPDF, and upload to Gemini
+        gemini_files = []
+        local_file_paths = [] 
+        
         try:
-            # 1. Save uploaded files to temporary storage so the API can read them
-            gemini_files = []
             for file in uploaded_files:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(file.read())
                     tmp_path = tmp.name
-                
-                # Upload to Gemini API
+                    local_file_paths.append((file.name, tmp_path))
+                    
                 uploaded_to_gemini = client.files.upload(
                     file=tmp_path, 
                     config={'display_name': file.name}
                 )
                 gemini_files.append(uploaded_to_gemini)
-                os.unlink(tmp_path) # Clean up temp file
 
-            # 2. Instruct the AI on exactly what to look for and how to output it
+            # 2. Instruct the AI to provide exact string matches for evidence
             prompt = """
-            You are a Senior Supplier Quality Engineer. Review the attached PDF documents.
-            Your job is to identify if the required PPAP documents are present and if they meet standard passing criteria.
+            You are a rigorous Quality Inspector. Audit the attached PPAP documents (FAI, CPK, PFMEA, etc.).
+            Identify specific failures, out-of-spec dimensions, or high RPNs (> 100).
             
-            Evaluate the following items:
-            1. Design Record / Drawing
-            2. Process Flow Diagram (PFD)
-            3. Process FMEA (PFMEA)
-            4. Control Plan
-            5. First Article Inspection (FAI)
-            6. Process Capability (CPK)
-            
-            Return the results STRICTLY as a JSON array of objects. Do not include markdown formatting like ```json.
-            Each object must have the following keys:
-            - "Document": The name of the required document category.
-            - "Status": "OK" if present and passing, "MISSING" if not found, "ALERT" if found but has issues.
-            - "Findings": A brief, accurate explanation of what you found (e.g., "CPK is > 1.33", "RPN is 192", or "Not provided").
+            Return a STRICT JSON array where each object has:
+            - "Document": Category (e.g., "FAI", "PFMEA")
+            - "Status": "FAIL" or "ALERT"
+            - "Finding": Explanation of the defect.
+            - "Exact_Text": The EXACT string of text or number as it appears in the PDF that proves this finding (e.g., "65.661", "192"). This MUST be a verbatim match to the document. If nothing applies, return "None".
             """
 
-            contents = gemini_files + [prompt]
+            response = client.models.generate_content(
+                model='gemini-1.5-pro', # Pro model is best for strict text extraction
+                contents=gemini_files + [prompt]
+            )
             
-            # 3. Send the PDFs and the Prompt to the AI with a Retry Loop
-            max_retries = 3
-            response = None
-            
-            for attempt in range(max_retries):
-                try:
-                    # Switched to the Flash model for faster processing and fewer 503 errors
-                    response = client.models.generate_content(
-                        model='gemini-3.5-flash', 
-                        contents=contents
-                    )
-                    break # Success! Break out of the retry loop
-                except Exception as e:
-                    if "503" in str(e) and attempt < max_retries - 1:
-                        time.sleep(3) # Wait 3 seconds and try again
-                        continue
-                    else:
-                        raise e # If it is not a 503 or we ran out of retries, throw the error
-            
-            # Clean up files from Gemini API storage
+            # Clean up API storage
             for f in gemini_files:
                 client.files.delete(name=f.name)
 
-            # 4. Parse the AI's JSON response
+            # 3. Parse JSON Response
             raw_text = response.text.strip()
             if raw_text.startswith("```json"):
                 raw_text = raw_text[7:-3] 
             elif raw_text.startswith("```"):
                 raw_text = raw_text[3:-3]
                 
-            checklist_data = json.loads(raw_text)
-            df = pd.DataFrame(checklist_data)
+            results = json.loads(raw_text)
 
-            # 5. Display the results with color coding
-            st.success("Scanning Complete!")
+            # 4. Display the Summary Table
+            st.subheader("📊 Automated Audit Summary")
+            df = pd.DataFrame(results)
             
             def color_status(val):
-                if val == 'OK':
-                    return 'background-color: #c6efce; color: #006100; font-weight: bold;'
-                elif val == 'MISSING':
+                if val == 'FAIL':
                     return 'background-color: #ffc7ce; color: #9c0006; font-weight: bold;'
                 elif val == 'ALERT':
                     return 'background-color: #ffeb9c; color: #9c5700; font-weight: bold;'
                 return ''
+                
+            st.dataframe(df.style.map(color_status, subset=['Status']), use_container_width=True)
 
-            styled_df = df.style.map(color_status, subset=['Status'])
-            st.dataframe(styled_df, use_container_width=True)
+            # 5. VISUAL EVIDENCE ENGINE (PyMuPDF)
+            st.subheader("🔍 Visual Evidence Tracing")
+            
+            for item in results:
+                evidence = str(item.get("Exact_Text", "None"))
+                
+                if evidence != "None" and evidence.strip() != "":
+                    st.markdown(f"### Proving: {item['Finding']}")
+                    st.write(f"**Target:** Searching PDFs for exactly `{evidence}`...")
+                    
+                    found_evidence = False
+                    
+                    # Scan every local PDF file
+                    for fname, fpath in local_file_paths:
+                        doc = fitz.open(fpath)
+                        
+                        # Scan every page
+                        for page_num in range(len(doc)):
+                            page = doc[page_num]
+                            # Search the page for the exact text the AI identified
+                            text_instances = page.search_for(evidence)
+                            
+                            if text_instances:
+                                found_evidence = True
+                                # Draw a bright rectangle over every instance found
+                                for inst in text_instances:
+                                    highlight = page.add_rect_annot(inst)
+                                    if item['Status'] == 'FAIL':
+                                        highlight.set_colors(stroke=(1, 0, 0)) # Red box for failure
+                                    else:
+                                        highlight.set_colors(stroke=(1, 0.64, 0)) # Orange box for alerts
+                                    highlight.set_border(width=3)
+                                    highlight.update()
+                                    
+                                # Render the marked-up page as an image
+                                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) # 2x zoom for clarity
+                                img_bytes = pix.tobytes("png")
+                                
+                                st.image(img_bytes, caption=f"Evidence isolated in {fname} (Page {page_num + 1})")
+                                break # Stop searching once we find the first proof image
+                        
+                        doc.close()
+                        if found_evidence:
+                            break
+                            
+                    if not found_evidence:
+                        st.warning(f"AI identified '{evidence}', but the deterministic engine could not locate it visually.")
+                        st.divider()
 
-        except json.JSONDecodeError:
-            st.error("The AI failed to format the response as JSON. Please try scanning again.")
         except Exception as e:
-            st.error(f"An error occurred during scanning: {e}")
+            st.error(f"System Error: {e}")
+            
+        finally:
+            # Always clean up local server temp files to prevent memory leaks
+            for _, fpath in local_file_paths:
+                try:
+                    os.unlink(fpath)
+                except:
+                    pass
