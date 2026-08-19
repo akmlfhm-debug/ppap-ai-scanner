@@ -11,7 +11,12 @@ st.set_page_config(layout="wide", page_title="AI Visual PPAP Validator")
 st.title("👁️ AI Visual PPAP Validator")
 st.write("This system uses AI to analyze documents, and deterministic logic to highlight the exact evidence on the PDFs.")
 
-api_key = st.text_input("Enter your Google Gemini API Key:", type="password")
+# Pull the API key securely from Streamlit Secrets (NO HARDCODING)
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+except KeyError:
+    st.error("API Key not found! Please add GEMINI_API_KEY to your Streamlit secrets.")
+    st.stop()
 
 uploaded_files = st.file_uploader(
     "Upload PPAP Documents (PDFs only)", 
@@ -20,29 +25,30 @@ uploaded_files = st.file_uploader(
 )
 
 if st.button("Run Detailed Visual Check"):
-    if not api_key or not uploaded_files:
-        st.error("Please provide both API key and files.")
+    if not uploaded_files:
+        st.error("Please upload at least one PDF document.")
         st.stop()
 
     client = genai.Client(api_key=api_key)
     
+    # Initialize these OUTSIDE the try block so they can be safely cleaned up
+    gemini_files = []
+    local_file_paths = [] 
+    
     with st.spinner("Analyzing documents and rendering visual evidence (this takes ~30 seconds)..."):
-        # 1. Save files locally for PyMuPDF, and upload to 
-        _files = []
-        local_file_paths = [] 
-        
         try:
+            # 1. Save files locally for PyMuPDF, and upload to Gemini
             for file in uploaded_files:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                     tmp.write(file.read())
                     tmp_path = tmp.name
                     local_file_paths.append((file.name, tmp_path))
                     
-                uploaded_to_ = client.files.upload(
+                uploaded_to_gemini = client.files.upload(
                     file=tmp_path, 
                     config={'display_name': file.name}
                 )
-                _files.append(uploaded_to_)
+                gemini_files.append(uploaded_to_gemini)
 
             # 2. Instruct the AI to provide exact string matches for evidence
             prompt = """
@@ -57,7 +63,7 @@ if st.button("Run Detailed Visual Check"):
             """
 
             response = client.models.generate_content(
-                model='gemini-3.5-pro', # Pro model is best for strict text extraction
+                model='gemini-1.5-pro',
                 contents=gemini_files + [prompt]
             )
             
@@ -106,7 +112,6 @@ if st.button("Run Detailed Visual Check"):
                         # Scan every page
                         for page_num in range(len(doc)):
                             page = doc[page_num]
-                            # Search the page for the exact text the AI identified
                             text_instances = page.search_for(evidence)
                             
                             if text_instances:
@@ -115,14 +120,14 @@ if st.button("Run Detailed Visual Check"):
                                 for inst in text_instances:
                                     highlight = page.add_rect_annot(inst)
                                     if item['Status'] == 'FAIL':
-                                        highlight.set_colors(stroke=(1, 0, 0)) # Red box for failure
+                                        highlight.set_colors(stroke=(1, 0, 0)) # Red
                                     else:
-                                        highlight.set_colors(stroke=(1, 0.64, 0)) # Orange box for alerts
+                                        highlight.set_colors(stroke=(1, 0.64, 0)) # Orange
                                     highlight.set_border(width=3)
                                     highlight.update()
                                     
                                 # Render the marked-up page as an image
-                                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) # 2x zoom for clarity
+                                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) 
                                 img_bytes = pix.tobytes("png")
                                 
                                 st.image(img_bytes, caption=f"Evidence isolated in {fname} (Page {page_num + 1})")
@@ -140,7 +145,7 @@ if st.button("Run Detailed Visual Check"):
             st.error(f"System Error: {e}")
             
         finally:
-            # Always clean up local server temp files to prevent memory leaks
+            # Always clean up local server temp files
             for _, fpath in local_file_paths:
                 try:
                     os.unlink(fpath)
