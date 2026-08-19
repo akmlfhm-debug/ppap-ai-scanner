@@ -27,8 +27,8 @@ if st.button("Run Detailed Visual Check"):
     client = genai.Client(api_key=api_key)
     
     with st.spinner("Analyzing documents and rendering visual evidence (this takes ~30 seconds)..."):
-        # 1. Save files locally for PyMuPDF, and upload to Gemini
-        gemini_files = []
+        # 1. Save files locally for PyMuPDF, and upload to 
+        _files = []
         local_file_paths = [] 
         
         try:
@@ -38,11 +38,11 @@ if st.button("Run Detailed Visual Check"):
                     tmp_path = tmp.name
                     local_file_paths.append((file.name, tmp_path))
                     
-                uploaded_to_gemini = client.files.upload(
+                uploaded_to_ = client.files.upload(
                     file=tmp_path, 
                     config={'display_name': file.name}
                 )
-                gemini_files.append(uploaded_to_gemini)
+                _files.append(uploaded_to_)
 
             # 2. Instruct the AI to provide exact string matches for evidence
             prompt = """
@@ -57,7 +57,7 @@ if st.button("Run Detailed Visual Check"):
             """
 
             response = client.models.generate_content(
-                model='gemini-1.5-pro', # Pro model is best for strict text extraction
+                model='gemini-3.5-flash', # Pro model is best for strict text extraction
                 contents=gemini_files + [prompt]
             )
             
